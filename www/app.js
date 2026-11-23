@@ -12,7 +12,7 @@ const T = {
     scan: '📷 סרוק מסמך', settings: 'שמור', reviewTitle: 'לא הצלחתי לזהות — אשר או תקן',
     type: 'סוג מסמך (תיקייה)', period: 'תקופה (למשל 2026.11-12)', ok: 'שמור', cancel: 'בטל',
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
-    hModels: 'שורה לכל מודל: gemini:שם-מודל  או  openrouter:שם-מודל. אם אחד נכשל, ינסה את הבא.',
+    hModels: 'שורה לכל מודל: gemini:שם-מודל, openrouter:שם-מודל או groq:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
     fail: 'שגיאה: ', modelLog: 'יומן מודלים', clearLog: 'נקה יומן', noLog: 'אין פעילות עדיין', needName: 'מסמך ממתין למתן שם', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
@@ -20,13 +20,13 @@ const T = {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
     type: 'Document type (folder)', period: 'Period (e.g. 2026.11-12)', ok: 'Save', cancel: 'Cancel',
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
-    hModels: 'One per line: gemini:model-name or openrouter:model-name. If one fails the next is tried.',
+    hModels: 'One per line: gemini:model-name, openrouter:model-name or groq:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
     fail: 'Error: ', modelLog: 'Model log', clearLog: 'Clear log', noLog: 'No activity yet', needName: 'Document needs a name', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
-  fmt: 'jpg', lang: 'en', gKey: '', oKey: '',
+  fmt: 'jpg', lang: 'en', gKey: '', oKey: '', grKey: '',
   models: 'gemini:gemini-2.5-flash\ngemini:gemini-2.5-flash-lite\nopenrouter:google/gemma-3-27b-it:free'
 }, JSON.parse(localStorage.getItem('s') || '{}'));
 const t = k => T[S.lang][k];
@@ -57,11 +57,11 @@ $('#pickBtn').onclick = async () => {
 $('#gearBtn').onclick = () => {
   const p = $('#settings');
   if (p.style.display === 'block') { p.style.display = 'none'; return; }
-  $('#sFmt').value = S.fmt; $('#sLang').value = S.lang; $('#sG').value = S.gKey; $('#sO').value = S.oKey; $('#sM').value = S.models; $('#sAuto').checked = !!S.auto;
+  $('#sFmt').value = S.fmt; $('#sLang').value = S.lang; $('#sG').value = S.gKey; $('#sO').value = S.oKey; $('#sGr').value = S.grKey; $('#sM').value = S.models; $('#sAuto').checked = !!S.auto;
   p.style.display = 'block';
 };
 $('#sOk').onclick = () => {
-  S = { fmt: $('#sFmt').value, lang: $('#sLang').value, gKey: $('#sG').value.trim(), oKey: $('#sO').value.trim(), models: $('#sM').value, auto: $('#sAuto').checked };
+  S = { fmt: $('#sFmt').value, lang: $('#sLang').value, gKey: $('#sG').value.trim(), oKey: $('#sO').value.trim(), grKey: $('#sGr').value.trim(), models: $('#sM').value, auto: $('#sAuto').checked };
   localStorage.setItem('s', JSON.stringify(S));
   applyLang(); $('#settings').style.display = 'none';
 };
@@ -152,10 +152,11 @@ async function askModel(line, img64, folders) {
     if (r.status === 400) r = await call(false); // model doesn't accept a thinking budget of 0
     if (!r.ok) throw new Error(`${model} ${r.status}: ${(await r.text()).slice(0, 150)}`);
     text = (await r.json()).candidates[0].content.parts[0].text;
-  } else if (prov === 'openrouter') {
-    if (!S.oKey) throw new Error('OpenRouter key is empty');
-    const r = await tfetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + S.oKey },
+  } else if (prov === 'openrouter' || prov === 'groq') {
+    const key = prov === 'groq' ? S.grKey : S.oKey;
+    if (!key) throw new Error(prov + ' key is empty - open settings, paste it and press Save');
+    const r = await tfetch(prov === 'groq' ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + key },
       body: JSON.stringify({
         model, messages: [{ role: 'user', content: [{ type: 'text', text: prompt(folders) },
           { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + img64 } }] }]
