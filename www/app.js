@@ -26,7 +26,7 @@ const T = {
   }
 };
 let S = Object.assign({
-  fmt: 'pdf', lang: 'he', gKey: '', oKey: '',
+  fmt: 'jpg', lang: 'en', gKey: '', oKey: '',
   models: 'gemini:gemini-2.5-flash\ngemini:gemini-2.5-flash-lite\nopenrouter:google/gemma-3-27b-it:free'
 }, JSON.parse(localStorage.getItem('s') || '{}'));
 const t = k => T[S.lang][k];
@@ -130,7 +130,7 @@ function prompt(folders) {
     '{"type": short Hebrew folder name for the document category (e.g. ארנונה, חשמל, מים, ביטוח, בנק, רפואי), ' +
     '"period": the period the document covers as YYYY.MM for one month, YYYY.MM-MM for a range of months in one year, ' +
     'YYYY for a whole year, YYYY.MM.DD if it is a single-date document, ' +
-    '"rotation": 0, 90, 180 or 270 = degrees clockwise the page image must be rotated so the text reads upright, "confident": true or false}. Existing folders: ' + JSON.stringify(folders) +
+    '"confident": true or false}. Existing folders: ' + JSON.stringify(folders) +
     ' - reuse one if it fits. Use the year printed on the document. If unsure about type or period, set confident false.';
 }
 
@@ -141,13 +141,15 @@ async function askModel(line, img64, folders) {
   let text;
   if (prov === 'gemini') {
     if (!S.gKey) throw new Error('Gemini key is empty - open settings, paste it and press Save');
-    const r = await tfetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.gKey}`, {
+    const call = think => tfetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.gKey}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt(folders) }, { inline_data: { mime_type: 'image/jpeg', data: img64 } }] }],
-        generationConfig: { responseMimeType: 'application/json' }
+        generationConfig: Object.assign({ responseMimeType: 'application/json' }, think ? { thinkingConfig: { thinkingBudget: 0 } } : {})
       })
     });
+    let r = await call(true);
+    if (r.status === 400) r = await call(false); // model doesn't accept a thinking budget of 0
     if (!r.ok) throw new Error(`${model} ${r.status}: ${(await r.text()).slice(0, 150)}`);
     text = (await r.json()).candidates[0].content.parts[0].text;
   } else if (prov === 'openrouter') {
@@ -169,7 +171,12 @@ let aiErr = '';
 async function classify(img64, folders) {
   aiErr = '';
   for (const line of S.models.split('\n').map(l => l.trim()).filter(Boolean)) {
-    try { return await askModel(line, img64, folders); } catch (e) { aiErr = String(e.message || e); }
+    const t0 = Date.now();
+    try {
+      const o = await askModel(line, img64, folders);
+      o._label = `${line.slice(line.indexOf(':') + 1).trim()} ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      return o;
+    } catch (e) { aiErr = String(e.message || e); }
   }
   return null;
 }
@@ -180,7 +187,7 @@ function review(item) {
     $('#folders').innerHTML = item.folders.map(f => `<option value="${f}">`).join('');
     const info = item.info || {};
     $('#rType').value = info.type || ''; $('#rPeriod').value = info.period || ''; $('#rRot').value = String(item.rot);
-    $('#rWhy').textContent = item.info ? '' : (item.err ? t('aiFail') + item.err : t('noKey'));
+    $('#rWhy').textContent = item.info ? item.info._label + ' (low confidence)' : (item.err ? t('aiFail') + item.err : t('noKey'));
     URL.revokeObjectURL($('#rImg').src);
     $('#rImg').src = URL.createObjectURL(new Blob([item.pages[0].bytes], { type: 'image/jpeg' }));
     $('#review').style.display = 'block';
@@ -227,11 +234,11 @@ function render() {
   });
 }
 
-async function saveDoc(pages, type, period) {
+async function saveDoc(pages, type, period, label = '') {
   try {
     const files = await save(pages, type, period);
     const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
-    results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${type}`);
+    results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${type}${label}`);
   } catch (e) {
     results.unshift(`✗ ${type} ${period}: ` + (e.message || e));
   }
@@ -253,12 +260,12 @@ async function process(j) {
   const folders = await existingFolders();
   let info = null;
   try { info = await classify(await thumbB64(j.paths[0]), folders); } catch (e) { aiErr = String(e.message || e); }
-  const err = aiErr, rot = info && [90, 180, 270].includes(+info.rotation) ? +info.rotation : 0;
+  const err = aiErr, rot = 0;
   current = t('compress'); render();
   const pages = [];
   for (const p of j.paths) { pages.push(await compress(p, rot)); await tick(); }
   current = '';
-  if (info && info.confident && info.type && info.period) await saveDoc(pages, info.type, info.period);
+  if (info && info.confident && info.type && info.period) await saveDoc(pages, info.type, info.period, ' · ' + info._label);
   else { pending.push({ paths: j.paths, pages, info, err, rot, folders }); render(); }
 }
 
