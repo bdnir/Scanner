@@ -20,10 +20,7 @@ jobs:
       - run: npx cap add android
       - name: Patch Android project
         run: |
-          M=android/app/src/main/AndroidManifest.xml
-          sed -i 's|<application|<application android:requestLegacyExternalStorage="true"|' $M
-          sed -i 's|</manifest>|<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/><uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/></manifest>|' $M
-          sed -i 's|targetSdkVersion = .*|targetSdkVersion = 29|' android/variables.gradle
+          cp android-src/*.java android/app/src/main/java/com/bdnir/scanner/
           mkdir -p ~/.android && cp ci/debug.keystore ~/.android/debug.keystore
       - run: npx cap sync android
       - name: Build

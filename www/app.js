@@ -1,9 +1,9 @@
 const C = window.Capacitor;
 const plug = n => (C.registerPlugin ? C.registerPlugin(n) : C.Plugins[n]);
 const Scanner = plug('DocumentScanner');
-const FS = plug('Filesystem');
+const Media = plug('MediaSave');
 const $ = s => document.querySelector(s);
-const DIR = 'EXTERNAL_STORAGE', ROOT = 'Download/Scans';
+const ROOT = 'Download/Scans';
 window.addEventListener('error', e => { $('#log').textContent = 'JS error: ' + e.message; });
 
 const MAX_BYTES = 110000; // per page, stays under 120k
@@ -108,10 +108,7 @@ function makePdf(pages) {
 
 // ---------- AI classification with model fallback ----------
 async function existingFolders() {
-  try {
-    const r = await FS.readdir({ path: ROOT, directory: DIR });
-    return r.files.filter(f => f.type !== 'file').map(f => f.name);
-  } catch (e) { return []; }
+  try { return (await Media.folders()).folders; } catch (e) { return []; }
 }
 
 function prompt(folders) {
@@ -177,28 +174,15 @@ function review(info, folders) {
 
 // ---------- saving ----------
 const clean = s => s.replace(/[\\/:*?"<>|]/g, '-').trim();
-async function exists(path) { try { await FS.stat({ path, directory: DIR }); return true; } catch (e) { return false; } }
-async function uniq(dir, base, ext) {
-  let name = base, n = 2;
-  while (await exists(`${dir}/${name}.${ext}`)) name = `${base}-${n++}`;
-  return `${dir}/${name}.${ext}`;
-}
-async function write(path, u8) {
-  await FS.writeFile({ path, data: b64(u8), directory: DIR, recursive: true });
-}
-
 async function save(pages, type, period) {
-  const dir = `${ROOT}/${clean(type)}`, base = clean(period);
-  try { await FS.requestPermissions(); } catch (e) { }
-  const saved = [];
-  if (S.fmt === 'pdf') {
-    const p = await uniq(dir, base, 'pdf'); await write(p, makePdf(pages)); saved.push(p);
-  } else {
-    for (let i = 0; i < pages.length; i++) {
-      const p = await uniq(dir, pages.length > 1 ? `${base}-p${i + 1}` : base, 'jpg');
-      await write(p, pages[i].bytes); saved.push(p);
-    }
-  }
+  const folder = clean(type), base = clean(period), saved = [];
+  const put = async (name, mime, u8) => {
+    const r = await Media.save({ folder, name, mime, data: b64(u8) });
+    saved.push(`${ROOT}/${folder}/${r.name}`);
+  };
+  if (S.fmt === 'pdf') await put(base + '.pdf', 'application/pdf', makePdf(pages));
+  else for (let i = 0; i < pages.length; i++)
+    await put((pages.length > 1 ? `${base}-p${i + 1}` : base) + '.jpg', 'image/jpeg', pages[i].bytes);
   return saved;
 }
 
