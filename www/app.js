@@ -14,7 +14,7 @@ const T = {
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
     hModels: 'שורה לכל מודל: gemini:שם-מודל, openrouter:שם-מודל או groq:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
-    fail: 'שגיאה: ', modelLog: 'יומן מודלים', clearLog: 'נקה יומן', noLog: 'אין פעילות עדיין', needName: 'מסמך ממתין למתן שם', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
+    fail: 'שגיאה: ', exists: 'כבר קיים קובץ בשם הזה בתיקייה', rename: 'שינוי שם', autoFmt: 'אוטומטי (עמוד אחד JPG, יותר - PDF)', modelLog: 'יומן מודלים', clearLog: 'נקה יומן', noLog: 'אין פעילות עדיין', needName: 'מסמך ממתין למתן שם', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
   en: {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
@@ -22,7 +22,7 @@ const T = {
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
     hModels: 'One per line: gemini:model-name, openrouter:model-name or groq:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
-    fail: 'Error: ', modelLog: 'Model log', clearLog: 'Clear log', noLog: 'No activity yet', needName: 'Document needs a name', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
+    fail: 'Error: ', exists: 'A file with this name already exists in the folder', rename: 'Rename', autoFmt: 'Auto (1 page JPG, more PDF)', modelLog: 'Model log', clearLog: 'Clear log', noLog: 'No activity yet', needName: 'Document needs a name', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
@@ -39,7 +39,7 @@ function applyLang() {
   $('#rOk').textContent = t('ok'); $('#rCancel').textContent = t('cancel');
   $('#lFmt').textContent = t('fmt'); $('#lLang').textContent = t('lang');
   $('#lModels').textContent = t('models'); $('#hModels').textContent = t('hModels');
-  $('#sOk').textContent = t('settings'); $('#sTitle').textContent = '⚙'; $('#logSum').textContent = t('modelLog'); $('#clearLog').textContent = t('clearLog'); $('#lAuto').textContent = t('autoNext');
+  $('#sOk').textContent = t('settings'); $('#sTitle').textContent = '⚙'; $('#rnOk').textContent = t('ok'); $('#rnCancel').textContent = t('cancel'); $('#rnTitle').textContent = t('rename'); $('#optAuto').textContent = t('autoFmt'); $('#logSum').textContent = t('modelLog'); $('#clearLog').textContent = t('clearLog'); $('#lAuto').textContent = t('autoNext');
   $('#lFolder').textContent = t('folder'); $('#pickBtn').textContent = t('pick');
 }
 applyLang();
@@ -130,6 +130,10 @@ function prompt(folders) {
 {"type": "...", "period": "...", "confident": true|false}
 
 TYPE: a short Hebrew folder name for the category (e.g. ארנונה, חשמל, מים, גז, ביטוח, בנק, רפואי, תקשורת). Existing folders: ${JSON.stringify(folders)} - reuse one if it fits.
+Decide the type mainly from the document TITLE (the heading at the top):
+"חשבון ארנונה" -> ארנונה; "חשבון גז" -> גז; "חשבון מים" -> מים.
+Electricity (חשמל): "חברת החשמל" appears at the top of the document, or the word "חשמל" appears somewhere in the document.
+Do not decide the type from a company name or a word that appears only in small print.
 
 PERIOD: the billing/service period the document COVERS (its start and end), NOT the issue date, mailing date, payment due date, print date or any other date.
 Dates are written day first: 1.11.2025 = 1 November 2025.
@@ -229,15 +233,41 @@ function review(item) {
 const clean = s => s.replace(/[\\/:*?"<>|]/g, '-').trim();
 async function save(pages, type, period) {
   const folder = clean(type), base = clean(period), saved = [];
+  const fmt = S.fmt === 'auto' ? (pages.length > 1 ? 'pdf' : 'jpg') : S.fmt;
   const put = async (name, mime, u8) => {
     const r = await Media.save({ folder, name, mime, data: b64(u8) });
-    saved.push(r.name);
+    saved.push({ name: r.name, folder, size: u8.length });
   };
-  if (S.fmt === 'pdf') await put(base + '.pdf', 'application/pdf', makePdf(pages));
+  if (fmt === 'pdf') await put(base + '.pdf', 'application/pdf', makePdf(pages));
   else for (let i = 0; i < pages.length; i++)
     await put((pages.length > 1 ? `${base}-p${i + 1}` : base) + '.jpg', 'image/jpeg', pages[i].bytes);
   return saved;
 }
+
+// ---------- rename a saved file ----------
+let rnTarget = null;
+function renameStart(r) {
+  rnTarget = r;
+  const i = r.name.lastIndexOf('.');
+  $('#rnInput').value = r.name.slice(0, i); $('#rnExt').textContent = r.name.slice(i);
+  $('#rnMsg').textContent = ''; $('#renamePanel').style.display = 'block';
+  $('#rnInput').focus();
+}
+$('#rnCancel').onclick = () => { $('#renamePanel').style.display = 'none'; rnTarget = null; };
+$('#rnOk').onclick = async () => {
+  if (!rnTarget) return;
+  const base = clean($('#rnInput').value);
+  if (!base) return;
+  const newName = base + $('#rnExt').textContent;
+  if (newName === rnTarget.name) { $('#renamePanel').style.display = 'none'; return; }
+  try {
+    const r = await Media.rename({ folder: rnTarget.folder, name: rnTarget.name, newName });
+    rnTarget.name = r.name; $('#renamePanel').style.display = 'none'; rnTarget = null; render();
+  } catch (e) {
+    const m = String(e.message || e);
+    $('#rnMsg').textContent = m === 'exists' ? t('exists') : t('fail') + m;
+  }
+};
 
 // ---------- model activity log ----------
 function logEntry(e) {
@@ -279,8 +309,16 @@ function render() {
   const lines = [];
   if (current) lines.push(current);
   if (working || queue.length) lines.push(t('bg') + (queue.length + (working ? 1 : 0)));
-  lines.push(...results.slice(0, 6));
   log(lines.join('\n'));
+  const rb = $('#results'); rb.innerHTML = '';
+  results.slice(0, 8).forEach(r => {
+    const d = document.createElement('div'); d.className = 'res';
+    const sp = document.createElement('span');
+    sp.textContent = r.ok ? `✓ ${r.folder}/${r.name} (${r.kb} KB)${r.label || ''}` : r.text;
+    d.appendChild(sp);
+    if (r.ok) { const b = document.createElement('button'); b.className = 'small sec'; b.textContent = '✎'; b.onclick = () => renameStart(r); d.appendChild(b); }
+    rb.appendChild(d);
+  });
   const box = $('#pending'); box.innerHTML = '';
   pending.forEach((it, i) => {
     const b = document.createElement('button'); b.className = 'sec'; b.style.marginTop = '8px';
@@ -294,11 +332,10 @@ async function saveDoc(pages, type, period, label = '', meta = null, manual = fa
   const entry = { ts: Date.now(), type, manual, attempts: meta ? meta.attempts : [], total: '' };
   try {
     const files = await save(pages, type, period);
-    const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
-    results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${type}${label}`);
-    entry.file = files.join(', ');
+    for (const f of files.slice().reverse()) results.unshift({ ok: true, name: f.name, folder: f.folder, kb: Math.round(f.size / 1024), label });
+    entry.file = files.map(f => f.name).join(', ');
   } catch (e) {
-    results.unshift(`✗ ${type} ${period}: ` + (e.message || e));
+    results.unshift({ ok: false, text: `✗ ${type} ${period}: ` + (e.message || e) });
     entry.file = `SAVE FAILED ${period}: ${String(e.message || e).slice(0, 80)}`;
   }
   entry.total = (meta ? (manual ? meta.procSec : (Date.now() - meta.start) / 1000) : 0).toFixed(1);
@@ -336,7 +373,7 @@ async function runQueue() {
   working = true;
   while (queue.length) {
     const j = queue.shift();
-    try { await process(j); } catch (e) { current = ''; results.unshift('✗ ' + (e.message || e)); }
+    try { await process(j); } catch (e) { current = ''; results.unshift({ ok: false, text: '✗ ' + (e.message || e) }); }
     render();
   }
   working = false; current = ''; render();

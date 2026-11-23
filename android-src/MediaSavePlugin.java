@@ -96,6 +96,29 @@ public class MediaSavePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void rename(PluginCall call) {
+        try {
+            Uri t = tree();
+            if (t == null) { call.reject("no main folder chosen"); return; }
+            ContentResolver r = getContext().getContentResolver();
+            String[] f = children(t, DocumentsContract.getTreeDocumentId(t)).get(call.getString("folder"));
+            if (f == null) { call.reject("folder not found"); return; }
+            Map<String, String[]> names = children(t, f[0]);
+            String oldName = call.getString("name"), newName = call.getString("newName");
+            String[] file = names.get(oldName);
+            if (file == null) { call.reject("file not found"); return; }
+            if (names.containsKey(newName)) { call.reject("exists"); return; }
+            Uri res = DocumentsContract.renameDocument(r, doc(t, file[0]), newName);
+            if (res == null) { call.reject("rename failed"); return; }
+            JSObject o = new JSObject();
+            o.put("name", newName);
+            call.resolve(o);
+        } catch (Exception e) {
+            call.reject(e.toString());
+        }
+    }
+
+    @PluginMethod
     public void save(PluginCall call) {
         try {
             Uri t = tree();
