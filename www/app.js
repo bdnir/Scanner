@@ -135,7 +135,7 @@ async function askModel(line, img64, folders) {
   const i = line.indexOf(':'), prov = line.slice(0, i).trim().toLowerCase(), model = line.slice(i + 1).trim();
   let text;
   if (prov === 'gemini') {
-    if (!S.gKey) throw new Error('no gemini key');
+    if (!S.gKey) throw new Error('Gemini key is empty - open settings, paste it and press Save');
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.gKey}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -143,10 +143,10 @@ async function askModel(line, img64, folders) {
         generationConfig: { responseMimeType: 'application/json' }
       })
     });
-    if (!r.ok) throw new Error(`${model} ${r.status}`);
+    if (!r.ok) throw new Error(`${model} ${r.status}: ${(await r.text()).slice(0, 150)}`);
     text = (await r.json()).candidates[0].content.parts[0].text;
   } else if (prov === 'openrouter') {
-    if (!S.oKey) throw new Error('no openrouter key');
+    if (!S.oKey) throw new Error('OpenRouter key is empty');
     const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + S.oKey },
       body: JSON.stringify({
@@ -154,7 +154,7 @@ async function askModel(line, img64, folders) {
           { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + img64 } }] }]
       })
     });
-    if (!r.ok) throw new Error(`${model} ${r.status}`);
+    if (!r.ok) throw new Error(`${model} ${r.status}: ${(await r.text()).slice(0, 150)}`);
     text = (await r.json()).choices[0].message.content;
   } else throw new Error('bad provider ' + prov);
   return JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
