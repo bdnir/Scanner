@@ -126,15 +126,26 @@ async function existingFolders() {
 }
 
 function prompt(folders) {
-  return 'This is a scanned document (Hebrew or English). Return JSON only: ' +
-    '{"type": short Hebrew folder name for the document category (e.g. ארנונה, חשמל, מים, ביטוח, בנק, רפואי), ' +
-    '"period": the period the document covers as YYYY.MM for one month, YYYY.MM-MM for a range of months in one year, ' +
-    'YYYY for a whole year, YYYY.MM.DD if it is a single-date document, ' +
-    '"confident": true or false}. Existing folders: ' + JSON.stringify(folders) +
-    ' - reuse one if it fits. Use the year printed on the document. If unsure about type or period, set confident false.';
-}
+  return `You read a scanned Israeli document (Hebrew or English; bills, statements, letters). Return JSON only:
+{"type": "...", "period": "...", "confident": true|false}
 
-const tfetch = (u, o) => { const c = new AbortController(); const id = setTimeout(() => c.abort(), 25000); return fetch(u, { ...o, signal: c.signal }).finally(() => clearTimeout(id)); };
+TYPE: a short Hebrew folder name for the category (e.g. ארנונה, חשמל, מים, גז, ביטוח, בנק, רפואי, תקשורת). Existing folders: ${JSON.stringify(folders)} - reuse one if it fits.
+
+PERIOD: the billing/service period the document COVERS (its start and end), NOT the issue date, mailing date, payment due date, print date or any other date.
+Dates are written day first: 1.11.2025 = 1 November 2025.
+Look for the covered range, for example: "תקופת חשבון", "לתקופה", "תקופת החיוב", "מ... עד...", "קריאה קודמת / קריאה נוכחית" (previous meter reading date = start, current reading date = end), "לחודשים".
+Output only year and month of the start and end, in this format:
+- start and end in the same month: YYYY.MM
+- same year, different months: YYYY.MM-MM
+- different years: YYYY.MM-YYYY.MM
+Examples:
+"תקופת חשבון 1.11.2025-27.12.2025" -> "2025.11-12"
+"חשבון לתקופה מ13/12/2021 עד 12/04/2022" -> "2021.12-2022.04"
+"קריאה נוכחית בתאריך 08.04.2023, קריאה קודמת 05.02.2023" -> "2023.02-04"
+"ארנונה לחודשים 11-12 2025" -> "2025.11-12"
+If the document has no covered period at all (a single-date document), use its main date as YYYY.MM.DD.
+If you cannot find the period or the category, set confident to false. Do not guess.`;
+}
 
 async function askModel(line, img64, folders) {
   const i = line.indexOf(':'), prov = line.slice(0, i).trim().toLowerCase(), model = line.slice(i + 1).trim();
@@ -165,7 +176,12 @@ async function askModel(line, img64, folders) {
     if (!r.ok) throw new Error(`${model} ${r.status}: ${(await r.text()).slice(0, 150)}`);
     text = (await r.json()).choices[0].message.content;
   } else throw new Error('bad provider ' + prov);
-  return JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+  const o = JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
+  const pd = String(o.period || '').trim().replace(/\//g, '.');
+  const ok = /^\d{4}\.(0[1-9]|1[0-2])(-(0[1-9]|1[0-2]))?$/.test(pd) || /^\d{4}\.(0[1-9]|1[0-2])-\d{4}\.(0[1-9]|1[0-2])$/.test(pd) || /^\d{4}\.(0[1-9]|1[0-2])\.(0[1-9]|[12]\d|3[01])$/.test(pd);
+  o.period = pd;
+  if (!ok) o.confident = false;
+  return o;
 }
 
 let aiErr = '';
