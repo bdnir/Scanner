@@ -1,7 +1,10 @@
 const C = window.Capacitor;
-const Scanner = C.registerPlugin('DocumentScanner');
-const FS = C.registerPlugin('Filesystem');
+const plug = n => (C.registerPlugin ? C.registerPlugin(n) : C.Plugins[n]);
+const Scanner = plug('DocumentScanner');
+const FS = plug('Filesystem');
 const $ = s => document.querySelector(s);
+const DIR = 'EXTERNAL_STORAGE', ROOT = 'Download/Scans';
+window.addEventListener('error', e => { $('#log').textContent = 'JS error: ' + e.message; });
 
 const MAX_BYTES = 110000; // per page, stays under 120k
 const T = {
@@ -106,7 +109,7 @@ function makePdf(pages) {
 // ---------- AI classification with model fallback ----------
 async function existingFolders() {
   try {
-    const r = await FS.readdir({ path: 'Scans', directory: 'DOCUMENTS' });
+    const r = await FS.readdir({ path: ROOT, directory: DIR });
     return r.files.filter(f => f.type !== 'file').map(f => f.name);
   } catch (e) { return []; }
 }
@@ -174,18 +177,18 @@ function review(info, folders) {
 
 // ---------- saving ----------
 const clean = s => s.replace(/[\\/:*?"<>|]/g, '-').trim();
-async function exists(path) { try { await FS.stat({ path, directory: 'DOCUMENTS' }); return true; } catch (e) { return false; } }
+async function exists(path) { try { await FS.stat({ path, directory: DIR }); return true; } catch (e) { return false; } }
 async function uniq(dir, base, ext) {
   let name = base, n = 2;
   while (await exists(`${dir}/${name}.${ext}`)) name = `${base}-${n++}`;
   return `${dir}/${name}.${ext}`;
 }
 async function write(path, u8) {
-  await FS.writeFile({ path, data: b64(u8), directory: 'DOCUMENTS', recursive: true });
+  await FS.writeFile({ path, data: b64(u8), directory: DIR, recursive: true });
 }
 
 async function save(pages, type, period) {
-  const dir = `Scans/${clean(type)}`, base = clean(period);
+  const dir = `${ROOT}/${clean(type)}`, base = clean(period);
   try { await FS.requestPermissions(); } catch (e) { }
   const saved = [];
   if (S.fmt === 'pdf') {
