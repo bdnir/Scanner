@@ -188,7 +188,7 @@ async function save(pages, type, period) {
   const folder = clean(type), base = clean(period), saved = [];
   const put = async (name, mime, u8) => {
     const r = await Media.save({ folder, name, mime, data: b64(u8) });
-    saved.push(`${mainFolder}/${folder}/${r.name}`);
+    saved.push(r.name);
   };
   if (S.fmt === 'pdf') await put(base + '.pdf', 'application/pdf', makePdf(pages));
   else for (let i = 0; i < pages.length; i++)
@@ -218,7 +218,7 @@ async function runQueue() {
       for (const p of j.paths) { pages.push(await compress(p)); await tick(); }
       const files = await save(pages, j.type, j.period);
       const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
-      results.unshift('✓ ' + files.join(', ') + ` (${kb} KB)`);
+      results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${j.type}`);
     } catch (e) {
       results.unshift(`✗ ${j.type} ${j.period}: ` + (e.message || e));
     }
@@ -263,6 +263,8 @@ $('#scanBtn').onclick = async () => {
     if (!mainFolder) { current = t('needFolder'); render(); $('#settings').style.display = 'block'; return; }
     while (await scanOnce() && S.auto);
   } catch (e) {
-    current = t('fail') + (e.message || e); render();
+    const m = String(e.message || e);
+    // closing the camera screen is a normal cancel, not an error
+    current = /cancel|Result code: 0/i.test(m) ? '' : t('fail') + m; render();
   }
 };
