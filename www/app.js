@@ -14,7 +14,7 @@ const T = {
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
     hModels: 'שורה לכל מודל: gemini:שם-מודל  או  openrouter:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
-    fail: 'שגיאה: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
+    fail: 'שגיאה: ', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
   en: {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
@@ -22,7 +22,7 @@ const T = {
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
     hModels: 'One per line: gemini:model-name or openrouter:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
-    fail: 'Error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
+    fail: 'Error: ', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
@@ -132,7 +132,7 @@ function prompt(folders) {
 }
 
 async function askModel(line, img64, folders) {
-  const i = line.indexOf(':'), prov = line.slice(0, i).trim(), model = line.slice(i + 1).trim();
+  const i = line.indexOf(':'), prov = line.slice(0, i).trim().toLowerCase(), model = line.slice(i + 1).trim();
   let text;
   if (prov === 'gemini') {
     if (!S.gKey) throw new Error('no gemini key');
@@ -160,9 +160,11 @@ async function askModel(line, img64, folders) {
   return JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
 }
 
+let aiErr = '';
 async function classify(img64, folders) {
+  aiErr = '';
   for (const line of S.models.split('\n').map(l => l.trim()).filter(Boolean)) {
-    try { return await askModel(line, img64, folders); } catch (e) { console.warn(line, e); }
+    try { return await askModel(line, img64, folders); } catch (e) { aiErr = String(e.message || e); }
   }
   return null;
 }
@@ -246,7 +248,7 @@ async function scanOnce() {
   const folders = await existingFolders();
   let info = await classify(await thumbB64(paths[0]), folders);
   if (!info || !info.confident || !info.type || !info.period) {
-    current = info ? '' : t('noKey'); render();
+    current = info ? '' : (aiErr ? t('aiFail') + aiErr : t('noKey')); render();
     info = await review(info, folders);
     if (!info) { current = t('cancelled'); render(); return false; }
   }
