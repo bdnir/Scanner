@@ -14,7 +14,7 @@ const T = {
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
     hModels: 'שורה לכל מודל: gemini:שם-מודל  או  openrouter:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
-    fail: 'שגיאה: ', needName: 'מסמך ממתין למתן שם', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
+    fail: 'שגיאה: ', modelLog: 'יומן מודלים', clearLog: 'נקה יומן', noLog: 'אין פעילות עדיין', needName: 'מסמך ממתין למתן שם', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
   en: {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
@@ -22,7 +22,7 @@ const T = {
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
     hModels: 'One per line: gemini:model-name or openrouter:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
-    fail: 'Error: ', needName: 'Document needs a name', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
+    fail: 'Error: ', modelLog: 'Model log', clearLog: 'Clear log', noLog: 'No activity yet', needName: 'Document needs a name', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
@@ -39,7 +39,7 @@ function applyLang() {
   $('#rOk').textContent = t('ok'); $('#rCancel').textContent = t('cancel');
   $('#lFmt').textContent = t('fmt'); $('#lLang').textContent = t('lang');
   $('#lModels').textContent = t('models'); $('#hModels').textContent = t('hModels');
-  $('#sOk').textContent = t('settings'); $('#sTitle').textContent = '⚙'; $('#lAuto').textContent = t('autoNext');
+  $('#sOk').textContent = t('settings'); $('#sTitle').textContent = '⚙'; $('#logSum').textContent = t('modelLog'); $('#clearLog').textContent = t('clearLog'); $('#lAuto').textContent = t('autoNext');
   $('#lFolder').textContent = t('folder'); $('#pickBtn').textContent = t('pick');
 }
 applyLang();
@@ -168,15 +168,21 @@ async function askModel(line, img64, folders) {
 }
 
 let aiErr = '';
+let lastAttempts = [];
 async function classify(img64, folders) {
-  aiErr = '';
+  aiErr = ''; lastAttempts = [];
   for (const line of S.models.split('\n').map(l => l.trim()).filter(Boolean)) {
-    const t0 = Date.now();
+    const t0 = Date.now(), name = line.slice(line.indexOf(':') + 1).trim();
     try {
       const o = await askModel(line, img64, folders);
-      o._label = `${line.slice(line.indexOf(':') + 1).trim()} ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+      const sec = (Date.now() - t0) / 1000;
+      lastAttempts.push({ model: name, ok: true, sec });
+      o._label = `${name} ${sec.toFixed(1)}s`;
       return o;
-    } catch (e) { aiErr = String(e.message || e); }
+    } catch (e) {
+      aiErr = String(e.message || e);
+      lastAttempts.push({ model: name, ok: false, sec: (Date.now() - t0) / 1000, err: aiErr.slice(0, 120) });
+    }
   }
   return null;
 }
@@ -214,6 +220,37 @@ async function save(pages, type, period) {
   return saved;
 }
 
+// ---------- model activity log ----------
+function logEntry(e) {
+  try {
+    const arr = JSON.parse(localStorage.getItem('log') || '[]');
+    arr.unshift(e);
+    localStorage.setItem('log', JSON.stringify(arr.slice(0, 300)));
+  } catch (x) { }
+}
+function renderLog() {
+  let arr = []; try { arr = JSON.parse(localStorage.getItem('log') || '[]'); } catch (x) { }
+  const st = {};
+  for (const e of arr) for (const a of e.attempts || []) {
+    const m = st[a.model] || (st[a.model] = { ok: 0, fail: 0, secOk: 0 });
+    if (a.ok) { m.ok++; m.secOk += a.sec; } else m.fail++;
+  }
+  const lines = Object.entries(st).map(([m, v]) =>
+    `${m}: ✓${v.ok} ✗${v.fail}` + (v.ok ? ` · avg ${(v.secOk / v.ok).toFixed(1)}s` : ''));
+  let out = lines.length ? lines.join('\n') + '\n\n' : '';
+  if (!arr.length) out = t('noLog');
+  for (const e of arr) {
+    const d = new Date(e.ts);
+    out += `${d.getDate()}/${d.getMonth() + 1} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} · ${e.file} · ${e.type} · total ${e.total}s${e.manual ? ' · manual' : ''}\n`;
+    for (const a of e.attempts || []) out += `   ${a.ok ? '✓' : '✗'} ${a.model} ${a.sec.toFixed(1)}s${a.err ? ' — ' + a.err : ''}\n`;
+    if (!(e.attempts || []).length) out += '   (no AI attempt)\n';
+    out += '\n';
+  }
+  $('#logView').textContent = out;
+}
+$('#clearLog').onclick = () => { localStorage.removeItem('log'); renderLog(); };
+$('#logBox').addEventListener('toggle', renderLog);
+
 // ---------- main flow ----------
 // Every scan goes straight into a background queue. The worker names it with AI, compresses it and saves it.
 // If AI can't name it, it waits in a "needs name" list and never blocks scanning.
@@ -234,14 +271,19 @@ function render() {
   });
 }
 
-async function saveDoc(pages, type, period, label = '') {
+async function saveDoc(pages, type, period, label = '', meta = null, manual = false) {
+  const entry = { ts: Date.now(), type, manual, attempts: meta ? meta.attempts : [], total: '' };
   try {
     const files = await save(pages, type, period);
     const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
     results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${type}${label}`);
+    entry.file = files.join(', ');
   } catch (e) {
     results.unshift(`✗ ${type} ${period}: ` + (e.message || e));
+    entry.file = `SAVE FAILED ${period}: ${String(e.message || e).slice(0, 80)}`;
   }
+  entry.total = (meta ? (manual ? meta.procSec : (Date.now() - meta.start) / 1000) : 0).toFixed(1);
+  logEntry(entry);
   render();
 }
 
@@ -252,21 +294,22 @@ async function nameIt(item) {
   pending.splice(pending.indexOf(item), 1);
   render();
   if (v.rot !== item.rot) { item.pages = []; for (const p of item.paths) { item.pages.push(await compress(p, v.rot)); await tick(); } }
-  saveDoc(item.pages, v.type, v.period);
+  saveDoc(item.pages, v.type, v.period, '', item.meta, true);
 }
 
 async function process(j) {
+  const start = Date.now();
   current = t('analyze'); render();
   const folders = await existingFolders();
   let info = null;
   try { info = await classify(await thumbB64(j.paths[0]), folders); } catch (e) { aiErr = String(e.message || e); }
-  const err = aiErr, rot = 0;
+  const err = aiErr, rot = 0, meta = { attempts: lastAttempts.slice(), start };
   current = t('compress'); render();
   const pages = [];
   for (const p of j.paths) { pages.push(await compress(p, rot)); await tick(); }
   current = '';
-  if (info && info.confident && info.type && info.period) await saveDoc(pages, info.type, info.period, ' · ' + info._label);
-  else { pending.push({ paths: j.paths, pages, info, err, rot, folders }); render(); }
+  if (info && info.confident && info.type && info.period) await saveDoc(pages, info.type, info.period, ' · ' + info._label, meta);
+  else { meta.procSec = (Date.now() - start) / 1000; pending.push({ paths: j.paths, pages, info, err, rot, folders, meta }); render(); }
 }
 
 async function runQueue() {
