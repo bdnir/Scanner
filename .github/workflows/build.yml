@@ -21,6 +21,8 @@ jobs:
       - name: Patch Android project
         run: |
           cp android-src/*.java android/app/src/main/java/com/bdnir/scanner/
+          cp -r icon/mipmap-* android/app/src/main/res/
+          rm -rf android/app/src/main/res/mipmap-anydpi-v26
           mkdir -p ~/.android && cp ci/debug.keystore ~/.android/debug.keystore
       - run: npx cap sync android
       - name: Build

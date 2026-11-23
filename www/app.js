@@ -39,7 +39,7 @@ function applyLang() {
   $('#rOk').textContent = t('ok'); $('#rCancel').textContent = t('cancel');
   $('#lFmt').textContent = t('fmt'); $('#lLang').textContent = t('lang');
   $('#lModels').textContent = t('models'); $('#hModels').textContent = t('hModels');
-  $('#sOk').textContent = t('settings'); $('#lAuto').textContent = t('autoNext');
+  $('#sOk').textContent = t('settings'); $('#sTitle').textContent = '⚙'; $('#lAuto').textContent = t('autoNext');
   $('#lFolder').textContent = t('folder'); $('#pickBtn').textContent = t('pick');
 }
 applyLang();
