@@ -3,7 +3,7 @@ const plug = n => (C.registerPlugin ? C.registerPlugin(n) : C.Plugins[n]);
 const Scanner = plug('DocumentScanner');
 const Media = plug('MediaSave');
 const $ = s => document.querySelector(s);
-const ROOT = 'Download/Scans';
+let mainFolder = '';
 window.addEventListener('error', e => { $('#log').textContent = 'JS error: ' + e.message; });
 
 const MAX_BYTES = 110000; // per page, stays under 120k
@@ -14,7 +14,7 @@ const T = {
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
     hModels: 'שורה לכל מודל: gemini:שם-מודל  או  openrouter:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
-    fail: 'שגיאה: ', cancelled: 'בוטל'
+    fail: 'שגיאה: ', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
   en: {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
@@ -22,7 +22,7 @@ const T = {
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
     hModels: 'One per line: gemini:model-name or openrouter:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
-    fail: 'Error: ', cancelled: 'Cancelled'
+    fail: 'Error: ', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
@@ -40,8 +40,19 @@ function applyLang() {
   $('#lFmt').textContent = t('fmt'); $('#lLang').textContent = t('lang');
   $('#lModels').textContent = t('models'); $('#hModels').textContent = t('hModels');
   $('#sOk').textContent = t('settings');
+  $('#lFolder').textContent = t('folder'); $('#pickBtn').textContent = t('pick');
 }
 applyLang();
+
+async function refreshFolder() {
+  try { mainFolder = (await Media.getFolder()).name; } catch (e) { mainFolder = ''; }
+  $('#folderName').textContent = mainFolder || t('none');
+}
+refreshFolder();
+$('#pickBtn').onclick = async () => {
+  try { await Media.pickFolder(); } catch (e) { }
+  refreshFolder();
+};
 
 $('#gearBtn').onclick = () => {
   const p = $('#settings');
@@ -178,7 +189,7 @@ async function save(pages, type, period) {
   const folder = clean(type), base = clean(period), saved = [];
   const put = async (name, mime, u8) => {
     const r = await Media.save({ folder, name, mime, data: b64(u8) });
-    saved.push(`${ROOT}/${folder}/${r.name}`);
+    saved.push(`${mainFolder}/${folder}/${r.name}`);
   };
   if (S.fmt === 'pdf') await put(base + '.pdf', 'application/pdf', makePdf(pages));
   else for (let i = 0; i < pages.length; i++)
@@ -190,6 +201,8 @@ async function save(pages, type, period) {
 $('#scanBtn').onclick = async () => {
   try {
     log('');
+    await refreshFolder();
+    if (!mainFolder) { log(t('needFolder')); $('#settings').style.display = 'block'; return; }
     const r = await Scanner.scanDocument({ galleryImportAllowed: true, pageLimit: 10, resultFormats: 'JPEG', scannerMode: 'FULL' });
     const paths = r.scannedImages || [];
     if (!paths.length) { log(t('cancelled')); return; }
