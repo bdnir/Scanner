@@ -14,7 +14,7 @@ const T = {
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
     hModels: 'שורה לכל מודל: gemini:שם-מודל  או  openrouter:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
-    fail: 'שגיאה: ', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
+    fail: 'שגיאה: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
   en: {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
@@ -22,7 +22,7 @@ const T = {
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
     hModels: 'One per line: gemini:model-name or openrouter:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
-    fail: 'Error: ', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
+    fail: 'Error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
@@ -39,7 +39,7 @@ function applyLang() {
   $('#rOk').textContent = t('ok'); $('#rCancel').textContent = t('cancel');
   $('#lFmt').textContent = t('fmt'); $('#lLang').textContent = t('lang');
   $('#lModels').textContent = t('models'); $('#hModels').textContent = t('hModels');
-  $('#sOk').textContent = t('settings');
+  $('#sOk').textContent = t('settings'); $('#lAuto').textContent = t('autoNext');
   $('#lFolder').textContent = t('folder'); $('#pickBtn').textContent = t('pick');
 }
 applyLang();
@@ -57,11 +57,11 @@ $('#pickBtn').onclick = async () => {
 $('#gearBtn').onclick = () => {
   const p = $('#settings');
   if (p.style.display === 'block') { p.style.display = 'none'; return; }
-  $('#sFmt').value = S.fmt; $('#sLang').value = S.lang; $('#sG').value = S.gKey; $('#sO').value = S.oKey; $('#sM').value = S.models;
+  $('#sFmt').value = S.fmt; $('#sLang').value = S.lang; $('#sG').value = S.gKey; $('#sO').value = S.oKey; $('#sM').value = S.models; $('#sAuto').checked = !!S.auto;
   p.style.display = 'block';
 };
 $('#sOk').onclick = () => {
-  S = { fmt: $('#sFmt').value, lang: $('#sLang').value, gKey: $('#sG').value.trim(), oKey: $('#sO').value.trim(), models: $('#sM').value };
+  S = { fmt: $('#sFmt').value, lang: $('#sLang').value, gKey: $('#sG').value.trim(), oKey: $('#sO').value.trim(), models: $('#sM').value, auto: $('#sAuto').checked };
   localStorage.setItem('s', JSON.stringify(S));
   applyLang(); $('#settings').style.display = 'none';
 };
@@ -160,8 +160,7 @@ async function askModel(line, img64, folders) {
   return JSON.parse(text.match(/\{[\s\S]*\}/)[0]);
 }
 
-async function classify(page, folders) {
-  const img64 = b64(page.bytes);
+async function classify(img64, folders) {
   for (const line of S.models.split('\n').map(l => l.trim()).filter(Boolean)) {
     try { return await askModel(line, img64, folders); } catch (e) { console.warn(line, e); }
   }
@@ -198,29 +197,72 @@ async function save(pages, type, period) {
 }
 
 // ---------- main flow ----------
+// Naming happens first (fast, uses a small preview); compression + saving run in a background queue.
+const queue = [], results = []; let working = false, current = '';
+function render() {
+  const lines = [];
+  if (current) lines.push(current);
+  if (working || queue.length) lines.push(t('bg') + (queue.length + (working ? 1 : 0)));
+  lines.push(...results.slice(0, 6));
+  log(lines.join('\n'));
+}
+const tick = () => new Promise(r => setTimeout(r, 0));
+
+async function runQueue() {
+  if (working) return;
+  working = true;
+  while (queue.length) {
+    const j = queue.shift(); render();
+    try {
+      const pages = [];
+      for (const p of j.paths) { pages.push(await compress(p)); await tick(); }
+      const files = await save(pages, j.type, j.period);
+      const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
+      results.unshift('✓ ' + files.join(', ') + ` (${kb} KB)`);
+    } catch (e) {
+      results.unshift(`✗ ${j.type} ${j.period}: ` + (e.message || e));
+    }
+  }
+  working = false; render();
+}
+
+async function thumbB64(path) {
+  const img = new Image();
+  img.src = C.convertFileSrc(path);
+  await img.decode();
+  const sc = Math.min(1, 900 / Math.max(img.width, img.height));
+  const cv = document.createElement('canvas'); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+  cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+  const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.6));
+  return b64(new Uint8Array(await blob.arrayBuffer()));
+}
+
+// returns true if a document was named and queued
+async function scanOnce() {
+  const r = await Scanner.scanDocument({ galleryImportAllowed: true, pageLimit: 10, resultFormats: 'JPEG', scannerMode: 'FULL' });
+  const paths = r.scannedImages || [];
+  if (!paths.length) { current = ''; render(); return false; }
+  current = t('analyze'); render();
+  const folders = await existingFolders();
+  let info = await classify(await thumbB64(paths[0]), folders);
+  if (!info || !info.confident || !info.type || !info.period) {
+    current = info ? '' : t('noKey'); render();
+    info = await review(info, folders);
+    if (!info) { current = t('cancelled'); render(); return false; }
+  }
+  current = '';
+  queue.push({ paths, type: info.type, period: info.period });
+  render(); runQueue();
+  return true;
+}
+
 $('#scanBtn').onclick = async () => {
   try {
-    log('');
+    current = ''; render();
     await refreshFolder();
-    if (!mainFolder) { log(t('needFolder')); $('#settings').style.display = 'block'; return; }
-    const r = await Scanner.scanDocument({ galleryImportAllowed: true, pageLimit: 10, resultFormats: 'JPEG', scannerMode: 'FULL' });
-    const paths = r.scannedImages || [];
-    if (!paths.length) { log(t('cancelled')); return; }
-    log(t('compress'));
-    const pages = [];
-    for (const p of paths) pages.push(await compress(p));
-    log(t('analyze'));
-    const folders = await existingFolders();
-    let info = await classify(pages[0], folders);
-    if (!info || !info.confident || !info.type || !info.period) {
-      log(info ? '' : t('noKey'));
-      info = await review(info, folders);
-      if (!info) { log(t('cancelled')); return; }
-    }
-    const files = await save(pages, info.type, info.period);
-    const kb = pages.reduce((a, p) => a + p.bytes.length, 0) / 1024;
-    log(t('saved') + files.join('\n') + `\n(${Math.round(kb)} KB)`);
+    if (!mainFolder) { current = t('needFolder'); render(); $('#settings').style.display = 'block'; return; }
+    while (await scanOnce() && S.auto);
   } catch (e) {
-    log(t('fail') + (e.message || e));
+    current = t('fail') + (e.message || e); render();
   }
 };
