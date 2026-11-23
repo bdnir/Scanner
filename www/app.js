@@ -14,7 +14,7 @@ const T = {
     fmt: 'פורמט שמירה', lang: 'שפה', models: 'מודלים של AI לפי סדר ניסיון',
     hModels: 'שורה לכל מודל: gemini:שם-מודל  או  openrouter:שם-מודל. אם אחד נכשל, ינסה את הבא.',
     compress: 'מכווץ…', analyze: 'מזהה סוג ותקופה…', saved: 'נשמר: ', noKey: 'לא הוגדר מפתח AI — הזן ידנית',
-    fail: 'שגיאה: ', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
+    fail: 'שגיאה: ', needName: 'מסמך ממתין למתן שם', aiFail: 'שגיאת AI: ', bg: 'שומר ברקע: ', autoNext: 'פתח מצלמה אוטומטית אחרי מתן שם', folder: 'תיקייה ראשית לשמירה', pick: 'בחר תיקייה', none: 'לא נבחרה תיקייה', needFolder: 'בחר קודם תיקייה ראשית בהגדרות (למשל Download/Scans)', cancelled: 'בוטל'
   },
   en: {
     scan: '📷 Scan document', settings: 'Save', reviewTitle: 'Could not identify — confirm or fix',
@@ -22,7 +22,7 @@ const T = {
     fmt: 'Save format', lang: 'Language', models: 'AI models, in order of attempt',
     hModels: 'One per line: gemini:model-name or openrouter:model-name. If one fails the next is tried.',
     compress: 'Compressing…', analyze: 'Detecting type and period…', saved: 'Saved: ', noKey: 'No AI key set — enter manually',
-    fail: 'Error: ', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
+    fail: 'Error: ', needName: 'Document needs a name', aiFail: 'AI error: ', bg: 'Saving in background: ', autoNext: 'Reopen camera automatically after naming', folder: 'Main save folder', pick: 'Choose folder', none: 'No folder chosen', needFolder: 'Choose a main folder in settings first (e.g. Download/Scans)', cancelled: 'Cancelled'
   }
 };
 let S = Object.assign({
@@ -67,21 +67,24 @@ $('#sOk').onclick = () => {
 };
 
 // ---------- image compression ----------
-async function compress(path) {
+async function compress(path, rot = 0) {
   const img = new Image();
   img.src = C.convertFileSrc(path);
   await img.decode();
-  let side = 1400, q = 0.6, blob;
+  const sw = rot % 180 ? img.height : img.width, sh = rot % 180 ? img.width : img.height;
+  let side = 1400, q = 0.6, blob, w = sw, h = sh;
   for (let i = 0; i < 12; i++) {
-    const sc = Math.min(1, side / Math.max(img.width, img.height));
-    const w = Math.round(img.width * sc), h = Math.round(img.height * sc);
+    const sc = Math.min(1, side / Math.max(sw, sh));
+    w = Math.round(sw * sc); h = Math.round(sh * sc);
     const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
-    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.drawImage(img, 0, 0, w, h);
+    const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h);
+    cx.save(); cx.translate(w / 2, h / 2); cx.rotate(rot * Math.PI / 180);
+    const dw = rot % 180 ? h : w, dh = rot % 180 ? w : h;
+    cx.drawImage(img, -dw / 2, -dh / 2, dw, dh); cx.restore();
     blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', q));
-    if (blob.size <= MAX_BYTES) return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h };
+    if (blob.size <= MAX_BYTES) break;
     if (q > 0.4) q -= 0.1; else { side *= 0.85; q = 0.5; }
   }
-  const w = img.width, h = img.height;
   return { bytes: new Uint8Array(await blob.arrayBuffer()), w, h };
 }
 
@@ -127,16 +130,18 @@ function prompt(folders) {
     '{"type": short Hebrew folder name for the document category (e.g. ארנונה, חשמל, מים, ביטוח, בנק, רפואי), ' +
     '"period": the period the document covers as YYYY.MM for one month, YYYY.MM-MM for a range of months in one year, ' +
     'YYYY for a whole year, YYYY.MM.DD if it is a single-date document, ' +
-    '"confident": true or false}. Existing folders: ' + JSON.stringify(folders) +
+    '"rotation": 0, 90, 180 or 270 = degrees clockwise the page image must be rotated so the text reads upright, "confident": true or false}. Existing folders: ' + JSON.stringify(folders) +
     ' - reuse one if it fits. Use the year printed on the document. If unsure about type or period, set confident false.';
 }
+
+const tfetch = (u, o) => { const c = new AbortController(); const id = setTimeout(() => c.abort(), 25000); return fetch(u, { ...o, signal: c.signal }).finally(() => clearTimeout(id)); };
 
 async function askModel(line, img64, folders) {
   const i = line.indexOf(':'), prov = line.slice(0, i).trim().toLowerCase(), model = line.slice(i + 1).trim();
   let text;
   if (prov === 'gemini') {
     if (!S.gKey) throw new Error('Gemini key is empty - open settings, paste it and press Save');
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.gKey}`, {
+    const r = await tfetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${S.gKey}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt(folders) }, { inline_data: { mime_type: 'image/jpeg', data: img64 } }] }],
@@ -147,7 +152,7 @@ async function askModel(line, img64, folders) {
     text = (await r.json()).candidates[0].content.parts[0].text;
   } else if (prov === 'openrouter') {
     if (!S.oKey) throw new Error('OpenRouter key is empty');
-    const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    const r = await tfetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + S.oKey },
       body: JSON.stringify({
         model, messages: [{ role: 'user', content: [{ type: 'text', text: prompt(folders) },
@@ -169,16 +174,20 @@ async function classify(img64, folders) {
   return null;
 }
 
-// ---------- review dialog ----------
-function review(info, folders) {
+// ---------- review dialog (for one pending document) ----------
+function review(item) {
   return new Promise(res => {
-    $('#folders').innerHTML = folders.map(f => `<option value="${f}">`).join('');
-    $('#rType').value = (info && info.type) || ''; $('#rPeriod').value = (info && info.period) || '';
+    $('#folders').innerHTML = item.folders.map(f => `<option value="${f}">`).join('');
+    const info = item.info || {};
+    $('#rType').value = info.type || ''; $('#rPeriod').value = info.period || ''; $('#rRot').value = String(item.rot);
+    $('#rWhy').textContent = item.info ? '' : (item.err ? t('aiFail') + item.err : t('noKey'));
+    URL.revokeObjectURL($('#rImg').src);
+    $('#rImg').src = URL.createObjectURL(new Blob([item.pages[0].bytes], { type: 'image/jpeg' }));
     $('#review').style.display = 'block';
     const done = v => { $('#review').style.display = 'none'; res(v); };
     $('#rOk').onclick = () => {
       const type = $('#rType').value.trim(), period = $('#rPeriod').value.trim();
-      if (type && period) done({ type, period });
+      if (type && period) done({ type, period, rot: +$('#rRot').value });
     };
     $('#rCancel').onclick = () => done(null);
   });
@@ -199,33 +208,69 @@ async function save(pages, type, period) {
 }
 
 // ---------- main flow ----------
-// Naming happens first (fast, uses a small preview); compression + saving run in a background queue.
-const queue = [], results = []; let working = false, current = '';
+// Every scan goes straight into a background queue. The worker names it with AI, compresses it and saves it.
+// If AI can't name it, it waits in a "needs name" list and never blocks scanning.
+const queue = [], results = [], pending = []; let working = false, current = '';
+const tick = () => new Promise(r => setTimeout(r, 0));
 function render() {
   const lines = [];
   if (current) lines.push(current);
   if (working || queue.length) lines.push(t('bg') + (queue.length + (working ? 1 : 0)));
   lines.push(...results.slice(0, 6));
   log(lines.join('\n'));
+  const box = $('#pending'); box.innerHTML = '';
+  pending.forEach((it, i) => {
+    const b = document.createElement('button'); b.className = 'sec'; b.style.marginTop = '8px';
+    b.textContent = `✎ ${t('needName')} (${i + 1}/${pending.length})`;
+    b.onclick = () => nameIt(it);
+    box.appendChild(b);
+  });
 }
-const tick = () => new Promise(r => setTimeout(r, 0));
+
+async function saveDoc(pages, type, period) {
+  try {
+    const files = await save(pages, type, period);
+    const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
+    results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${type}`);
+  } catch (e) {
+    results.unshift(`✗ ${type} ${period}: ` + (e.message || e));
+  }
+  render();
+}
+
+async function nameIt(item) {
+  if ($('#review').style.display === 'block') return;
+  const v = await review(item);
+  if (!v) return;
+  pending.splice(pending.indexOf(item), 1);
+  render();
+  if (v.rot !== item.rot) { item.pages = []; for (const p of item.paths) { item.pages.push(await compress(p, v.rot)); await tick(); } }
+  saveDoc(item.pages, v.type, v.period);
+}
+
+async function process(j) {
+  current = t('analyze'); render();
+  const folders = await existingFolders();
+  let info = null;
+  try { info = await classify(await thumbB64(j.paths[0]), folders); } catch (e) { aiErr = String(e.message || e); }
+  const err = aiErr, rot = info && [90, 180, 270].includes(+info.rotation) ? +info.rotation : 0;
+  current = t('compress'); render();
+  const pages = [];
+  for (const p of j.paths) { pages.push(await compress(p, rot)); await tick(); }
+  current = '';
+  if (info && info.confident && info.type && info.period) await saveDoc(pages, info.type, info.period);
+  else { pending.push({ paths: j.paths, pages, info, err, rot, folders }); render(); }
+}
 
 async function runQueue() {
   if (working) return;
   working = true;
   while (queue.length) {
-    const j = queue.shift(); render();
-    try {
-      const pages = [];
-      for (const p of j.paths) { pages.push(await compress(p)); await tick(); }
-      const files = await save(pages, j.type, j.period);
-      const kb = Math.round(pages.reduce((a, p) => a + p.bytes.length, 0) / 1024);
-      results.unshift('✓ ' + files.join(', ') + ` (${kb} KB) · ${j.type}`);
-    } catch (e) {
-      results.unshift(`✗ ${j.type} ${j.period}: ` + (e.message || e));
-    }
+    const j = queue.shift();
+    try { await process(j); } catch (e) { current = ''; results.unshift('✗ ' + (e.message || e)); }
+    render();
   }
-  working = false; render();
+  working = false; current = ''; render();
 }
 
 async function thumbB64(path) {
@@ -239,34 +284,24 @@ async function thumbB64(path) {
   return b64(new Uint8Array(await blob.arrayBuffer()));
 }
 
-// returns true if a document was named and queued
+// returns true if a document was scanned and queued
 async function scanOnce() {
   const r = await Scanner.scanDocument({ galleryImportAllowed: true, pageLimit: 10, resultFormats: 'JPEG', scannerMode: 'FULL' });
   const paths = r.scannedImages || [];
-  if (!paths.length) { current = ''; render(); return false; }
-  current = t('analyze'); render();
-  const folders = await existingFolders();
-  let info = await classify(await thumbB64(paths[0]), folders);
-  if (!info || !info.confident || !info.type || !info.period) {
-    current = info ? '' : (aiErr ? t('aiFail') + aiErr : t('noKey')); render();
-    info = await review(info, folders);
-    if (!info) { current = t('cancelled'); render(); return false; }
-  }
-  current = '';
-  queue.push({ paths, type: info.type, period: info.period });
+  if (!paths.length) return false;
+  queue.push({ paths });
   render(); runQueue();
   return true;
 }
 
 $('#scanBtn').onclick = async () => {
   try {
-    current = ''; render();
     await refreshFolder();
     if (!mainFolder) { current = t('needFolder'); render(); $('#settings').style.display = 'block'; return; }
+    current = ''; render();
     while (await scanOnce() && S.auto);
   } catch (e) {
     const m = String(e.message || e);
-    // closing the camera screen is a normal cancel, not an error
     current = /cancel|Result code: 0/i.test(m) ? '' : t('fail') + m; render();
   }
 };

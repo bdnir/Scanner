@@ -26,13 +26,17 @@ small{color:#666}
 <body>
 <h1><span id="title">Scanner</span><button class="gear" id="gearBtn">⚙</button></h1>
 <div id="log"></div>
+<div id="pending"></div>
 <button id="scanBtn" class="fab"></button>
 
 <div class="panel" id="review">
   <b id="reviewTitle"></b>
+  <img id="rImg" style="width:100%;max-height:260px;object-fit:contain;margin-top:8px;background:#eee">
+  <div id="rWhy" style="font-size:13px;color:#a33;margin-top:6px"></div>
   <label id="lType"></label><input id="rType" list="folders">
   <datalist id="folders"></datalist>
   <label id="lPeriod"></label><input id="rPeriod" dir="ltr" placeholder="2026.11-12">
+  <label>Rotation</label><select id="rRot"><option value="0">0°</option><option value="90">90° →</option><option value="180">180°</option><option value="270">90° ←</option></select>
   <div class="row"><button id="rOk"></button><button class="sec" id="rCancel"></button></div>
 </div>
 
