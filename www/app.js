@@ -147,6 +147,8 @@ If the document has no covered period at all (a single-date document), use its m
 If you cannot find the period or the category, set confident to false. Do not guess.`;
 }
 
+const tfetch = (u, o) => { const c = new AbortController(); const id = setTimeout(() => c.abort(), 25000); return fetch(u, { ...o, signal: c.signal }).finally(() => clearTimeout(id)); };
+
 async function askModel(line, img64, folders) {
   const i = line.indexOf(':'), prov = line.slice(0, i).trim().toLowerCase(), model = line.slice(i + 1).trim();
   let text;
